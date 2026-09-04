@@ -10,6 +10,43 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def rope_layer_schedule(config: object) -> tuple[bool, ...]:
+    """Per-layer RoPE flags: ``True`` where the layer applies RoPE.
+
+    SmolLM3 interleaves NoPE layers (no positional encoding) among regular
+    RoPE layers. The checkpoint publishes this as ``no_rope_layers``, whose
+    entries are ``1`` where the layer *uses* RoPE and ``0`` where it is a
+    NoPE layer. When the list is absent it is derived from
+    ``no_rope_layer_interval``: layer ``i`` is NoPE when
+    ``(i + 1) % interval == 0``, matching the upstream default of one NoPE
+    layer every four layers.
+
+    This is a module-level helper (not a ``ModelConfig`` method) so the shared
+    ``tensorrt_model_connect.config.ModelConfig`` used by the production build
+    pipeline can resolve the same schedule.
+    """
+    num_layers = int(getattr(config, "num_hidden_layers", 0))
+    raw = getattr(config, "raw", {}) or {}
+    published = raw.get("no_rope_layers")
+    if published is not None:
+        if (not isinstance(published, (list, tuple))
+                or len(published) < num_layers):
+            raise ValueError(
+                "no_rope_layers must be a sequence with at least "
+                f"num_hidden_layers ({num_layers}) entries, got "
+                f"{published!r}")
+        return tuple(bool(int(flag)) for flag in published[:num_layers])
+
+    interval = raw.get("no_rope_layer_interval")
+    if interval is None:
+        return (True,) * num_layers
+    interval = int(interval)
+    if interval <= 0:
+        raise ValueError(
+            f"no_rope_layer_interval must be positive, got {interval}")
+    return tuple((idx + 1) % interval != 0 for idx in range(num_layers))
+
+
 @dataclass
 class ModelConfig:
     """Parsed model architecture from HF config.json."""
@@ -50,35 +87,8 @@ class ModelConfig:
         return self.num_attention_heads * self.head_dim
 
     def rope_layer_schedule(self) -> tuple[bool, ...]:
-        """Per-layer RoPE flags: ``True`` where the layer applies RoPE.
-
-        SmolLM3 interleaves NoPE layers (no positional encoding) among regular
-        RoPE layers. The checkpoint publishes this as ``no_rope_layers``, whose
-        entries are ``1`` where the layer *uses* RoPE and ``0`` where it is a
-        NoPE layer. When the list is absent it is derived from
-        ``no_rope_layer_interval``: layer ``i`` is NoPE when
-        ``(i + 1) % interval == 0``, matching the upstream default of one NoPE
-        layer every four layers.
-        """
-        num_layers = int(self.num_hidden_layers)
-        published = self.raw.get("no_rope_layers")
-        if published is not None:
-            if (not isinstance(published, (list, tuple))
-                    or len(published) < num_layers):
-                raise ValueError(
-                    "no_rope_layers must be a sequence with at least "
-                    f"num_hidden_layers ({num_layers}) entries, got "
-                    f"{published!r}")
-            return tuple(bool(int(flag)) for flag in published[:num_layers])
-
-        interval = self.raw.get("no_rope_layer_interval")
-        if interval is None:
-            return (True,) * num_layers
-        interval = int(interval)
-        if interval <= 0:
-            raise ValueError(
-                f"no_rope_layer_interval must be positive, got {interval}")
-        return tuple((idx + 1) % interval != 0 for idx in range(num_layers))
+        """Per-layer RoPE flags for this family-local ``ModelConfig``."""
+        return rope_layer_schedule(self)
 
     @staticmethod
     def from_json(text: str) -> ModelConfig:

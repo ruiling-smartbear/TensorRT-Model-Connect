@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 import operator
 
+from .config import rope_layer_schedule
+
 _INT32_MAX = (1 << 31) - 1
 _UINT64_MAX = (1 << 64) - 1
 
@@ -201,11 +203,8 @@ def _validate_rope_layer_schedule(
         "no_rope_layer_interval"
     ) is None:
         return
-    resolve = getattr(config, "rope_layer_schedule", None)
-    if resolve is None:
-        return
     try:
-        schedule = resolve()
+        schedule = rope_layer_schedule(config)
     except ValueError as exc:
         reasons.append(str(exc))
         return

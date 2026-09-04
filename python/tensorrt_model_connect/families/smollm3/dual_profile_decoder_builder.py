@@ -58,6 +58,7 @@ from ...native_kv_attention_builder import (
 
 from . import graph_ops
 from . import graph_blocks
+from .config import rope_layer_schedule
 
 trt = trt_compat.get_trt()
 
@@ -613,7 +614,7 @@ def build_dual_profile_decoder_engine(
     present_v_outs: list[trt.ITensor] = []
 
     # SmolLM3 interleaves NoPE layers; layers flagged False here skip RoPE.
-    rope_schedule = config.rope_layer_schedule()
+    rope_schedule = rope_layer_schedule(config)
 
     for layer_idx in range(num_layers):
         prefix = f"layer.{layer_idx}"
